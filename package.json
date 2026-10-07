@@ -1,0 +1,20 @@
+{
+  "name": "dodo-visual-toy",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@fontsource/jetbrains-mono": "^5.0.21",
+    "@fontsource/space-grotesk": "^5.0.18",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.64.1"
+  }
+}
