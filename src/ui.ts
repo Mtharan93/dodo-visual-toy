@@ -61,6 +61,9 @@ export const THEMES: ThemeColors[] = [
 
 export class UIController {
   public state: UIState;
+  private isPlaceholder: boolean = true;
+  private isSelectedAll: boolean = false;
+
   private targetColors: ThemeColors;
   private currentColors: ThemeColors;
   private colorTransitionProgress: number = 1.0;
@@ -68,6 +71,8 @@ export class UIController {
 
   private dockPill: HTMLElement | null = null;
   private hintElement: HTMLElement | null = null;
+  private hintPrompt: HTMLElement | null = null;
+  private charCounter: HTMLElement | null = null;
   private mobileInput: HTMLInputElement | null = null;
   private cellValDisplay: HTMLElement | null = null;
   private lensValDisplay: HTMLElement | null = null;
@@ -80,7 +85,18 @@ export class UIController {
 
   constructor(events: UIEvents) {
     this.events = events;
-    const initialTheme = 0;
+    let initialTheme = 0;
+    try {
+      const saved = localStorage.getItem('theme');
+      if (saved !== null) {
+        const parsed = parseInt(saved, 10);
+        if (parsed >= 0 && parsed < THEMES.length) {
+          initialTheme = parsed;
+        }
+      }
+    } catch {
+      // LocalStorage access failsafe
+    }
 
     this.startColors = { ...THEMES[initialTheme] };
     this.targetColors = { ...THEMES[initialTheme] };
@@ -98,6 +114,8 @@ export class UIController {
   public init() {
     this.dockPill = document.getElementById('dock-pill');
     this.hintElement = document.getElementById('type-hint');
+    this.hintPrompt = document.getElementById('hint-prompt');
+    this.charCounter = document.getElementById('char-counter');
     this.mobileInput = document.getElementById('mobile-text-input') as HTMLInputElement;
     this.cellValDisplay = document.getElementById('cell-val');
     this.lensValDisplay = document.getElementById('lens-val');
@@ -107,6 +125,16 @@ export class UIController {
     const cellSlider = document.getElementById('cell-slider') as HTMLInputElement;
     const lensSlider = document.getElementById('lens-slider') as HTMLInputElement;
     const exportBtn = document.getElementById('export-btn');
+
+    // Update active button state for initial theme
+    for (let i = 0; i < 3; i++) {
+      const btn = document.getElementById(`theme-btn-${i}`);
+      if (btn) {
+        const isActive = i === this.state.activeThemeIndex;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
+      }
+    }
 
     // Cell slider input
     if (cellSlider) {
@@ -158,10 +186,30 @@ export class UIController {
       });
     }
 
-    // Mobile input listener
+    // Mobile input listener (supports virtual mobile keyboards)
     if (this.mobileInput) {
+      this.mobileInput.value = this.state.currentWord;
+
+      this.mobileInput.addEventListener('beforeinput', (e: InputEvent) => {
+        if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
+          e.preventDefault();
+          this.handleBackspace();
+        } else if (e.inputType === 'insertLineBreak') {
+          e.preventDefault();
+          this.handleEnter();
+        } else if (e.data) {
+          e.preventDefault();
+          for (const char of e.data) {
+            this.handlePrintableChar(char);
+          }
+        }
+      });
+
       this.mobileInput.addEventListener('input', () => {
-        this.setWord(this.mobileInput!.value);
+        // Fallback sync if beforeinput was not triggered
+        if (this.mobileInput && this.mobileInput.value !== this.state.currentWord) {
+          this.setWord(this.mobileInput.value);
+        }
       });
     }
 
@@ -175,6 +223,7 @@ export class UIController {
       this.resetDockIdleTimer();
     });
 
+    this.updateCharCounter(this.state.currentWord);
     this.resetDockIdleTimer();
   }
 
@@ -192,7 +241,14 @@ export class UIController {
     this.colorTransitionProgress = 0.0;
     this.state.activeThemeIndex = index;
 
-    // Update body attribute for theme CSS variables
+    try {
+      localStorage.setItem('theme', String(index));
+    } catch {
+      // LocalStorage access failsafe
+    }
+
+    // Update root and body attributes for theme CSS variables
+    document.documentElement.setAttribute('data-theme', `${index}`);
     document.body.setAttribute('data-theme', `${index}`);
 
     // Update active button state
@@ -215,10 +271,10 @@ export class UIController {
 
   public setWord(newWord: string) {
     let clean = newWord.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    const lines = clean.split('\n').slice(0, 2);
+    const lines = clean.split('\n').slice(0, 4);
     clean = lines.join('\n');
-    if (clean.length > 14) {
-      clean = clean.slice(0, 14);
+    if (clean.length > 40) {
+      clean = clean.slice(0, 40);
     }
 
     this.state.currentWord = clean;
@@ -228,99 +284,197 @@ export class UIController {
     }
 
     if (this.canvasElement) {
-      this.canvasElement.setAttribute('aria-label', clean.replace('\n', ' ') || 'DODO');
+      this.canvasElement.setAttribute('aria-label', clean.replace(/\n/g, ' ') || 'Halftone Lens');
     }
 
     if (this.fallbackWordElement) {
-      this.fallbackWordElement.textContent = clean.replace('\n', ' ') || 'DODO';
+      this.fallbackWordElement.textContent = clean.replace(/\n/g, ' ') || 'DODO';
     }
 
-    this.onTypingAction();
+    this.updateCharCounter(clean);
+    this.onTypingAction(clean);
     this.events.onTextChange(clean);
   }
 
+  private updateCharCounter(word: string) {
+    if (this.charCounter) {
+      const count = word.length;
+      this.charCounter.textContent = `${count}/40`;
+      this.charCounter.classList.toggle('counter-warn', count >= 36);
+    }
+  }
+
+  public triggerLimitShake() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return;
+    }
+    const target = this.hintElement || this.charCounter;
+    if (target) {
+      target.classList.remove('shake');
+      // Trigger DOM reflow to allow consecutive shakes
+      void target.offsetWidth;
+      target.classList.add('shake');
+      window.setTimeout(() => {
+        target.classList.remove('shake');
+      }, 200);
+    }
+  }
+
   private handleKeyDown(e: KeyboardEvent) {
-    // Ignore when focus is inside a regular form control (except mobile-input)
+    // Ignore events when focus is on range inputs or interactive buttons
+    const activeEl = document.activeElement;
     if (
-      document.activeElement &&
-      document.activeElement !== document.body &&
-      document.activeElement !== this.mobileInput &&
-      document.activeElement !== this.canvasElement &&
-      (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')
+      activeEl &&
+      activeEl !== document.body &&
+      activeEl !== this.mobileInput &&
+      activeEl !== this.canvasElement &&
+      (activeEl.tagName === 'BUTTON' || (activeEl.tagName === 'INPUT' && (activeEl as HTMLInputElement).type === 'range'))
     ) {
+      // Allow Escape even from focused controls
+      if (e.key === 'Escape') {
+        (activeEl as HTMLElement).blur();
+      } else {
+        return;
+      }
+    }
+
+    // Alt shortcuts for themes and PNG export
+    if (e.altKey) {
+      if (e.key === '1') {
+        e.preventDefault();
+        this.setTheme(0);
+        return;
+      }
+      if (e.key === '2') {
+        e.preventDefault();
+        this.setTheme(1);
+        return;
+      }
+      if (e.key === '3') {
+        e.preventDefault();
+        this.setTheme(2);
+        return;
+      }
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        this.events.onSavePNG();
+        return;
+      }
       return;
     }
 
-    // Theme shortcuts: 1, 2, 3
-    if (e.key === '1') {
-      this.setTheme(0);
-      return;
-    }
-    if (e.key === '2') {
-      this.setTheme(1);
-      return;
-    }
-    if (e.key === '3') {
-      this.setTheme(2);
-      return;
-    }
-
-    // Save PNG shortcut: S (without meta/ctrl)
-    if ((e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    // Ctrl/Cmd+A: Select all
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
       e.preventDefault();
-      this.events.onSavePNG();
+      this.isSelectedAll = true;
+      return;
+    }
+
+    // Ignore other Ctrl/Cmd combinations (e.g. Ctrl+R, Ctrl+C)
+    if (e.ctrlKey || e.metaKey) {
       return;
     }
 
     // Reset to "DODO": Escape
     if (e.key === 'Escape') {
       e.preventDefault();
+      this.isPlaceholder = true;
+      this.isSelectedAll = false;
       this.setWord('DODO');
       return;
     }
 
-    // Backspace: Delete character
+    // Backspace: Delete character (supports hold/repeat)
     if (e.key === 'Backspace') {
       e.preventDefault();
-      const current = this.state.currentWord;
-      if (current.length > 0) {
-        this.setWord(current.slice(0, -1));
-      }
+      this.handleBackspace();
       return;
     }
 
-    // Enter: Newline (if max 2 lines not exceeded)
+    // Enter: Newline (if max 4 lines not exceeded)
     if (e.key === 'Enter') {
       e.preventDefault();
-      const current = this.state.currentWord;
-      if (!current.includes('\n') && current.length < 13 && current.length > 0) {
-        this.setWord(current + '\n');
-      }
+      this.handleEnter();
       return;
     }
 
     // Printable character input
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key.length === 1) {
       e.preventDefault();
-      const current = this.state.currentWord;
-      if (current.length < 14) {
-        this.setWord(current + e.key.toUpperCase());
-      }
+      this.handlePrintableChar(e.key);
     }
   }
 
-  private onTypingAction() {
-    if (this.hintElement) {
-      this.hintElement.classList.add('faded');
+  private handleBackspace() {
+    if (this.isPlaceholder || this.isSelectedAll) {
+      this.isPlaceholder = false;
+      this.isSelectedAll = false;
+      this.setWord('');
+      return;
     }
 
-    // Reset 8s idle timer for typing hint
+    const current = this.state.currentWord;
+    if (current.length > 0) {
+      this.setWord(current.slice(0, -1));
+    }
+  }
+
+  private handleEnter() {
+    if (this.isPlaceholder || this.isSelectedAll) {
+      this.isPlaceholder = false;
+      this.isSelectedAll = false;
+      this.setWord('');
+      return;
+    }
+
+    const current = this.state.currentWord;
+    const lines = (current.match(/\n/g) || []).length + 1;
+    if (lines < 4 && current.length < 40 && current.length > 0) {
+      this.setWord(current + '\n');
+    } else {
+      this.triggerLimitShake();
+    }
+  }
+
+  private handlePrintableChar(char: string) {
+    if (this.isPlaceholder || this.isSelectedAll) {
+      this.isPlaceholder = false;
+      this.isSelectedAll = false;
+      this.setWord(char.toUpperCase());
+      return;
+    }
+
+    const current = this.state.currentWord;
+    if (current.length < 40) {
+      this.setWord(current + char.toUpperCase());
+    } else {
+      this.triggerLimitShake();
+    }
+  }
+
+  private onTypingAction(word: string) {
+    // If word is empty or is placeholder, keep the hint prompt visible
+    if (!word || word.length === 0 || this.isPlaceholder) {
+      if (this.hintPrompt) {
+        this.hintPrompt.classList.remove('faded');
+      }
+      if (this.idleTypingTimer) {
+        window.clearTimeout(this.idleTypingTimer);
+      }
+      return;
+    }
+
+    if (this.hintPrompt) {
+      this.hintPrompt.classList.add('faded');
+    }
+
+    // Reset 8s idle timer for typing hint prompt
     if (this.idleTypingTimer) {
       window.clearTimeout(this.idleTypingTimer);
     }
     this.idleTypingTimer = window.setTimeout(() => {
-      if (this.hintElement) {
-        this.hintElement.classList.remove('faded');
+      if (this.hintPrompt) {
+        this.hintPrompt.classList.remove('faded');
       }
     }, 8000);
   }

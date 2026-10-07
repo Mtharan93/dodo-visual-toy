@@ -17,21 +17,34 @@ export interface GLContext {
 }
 
 /**
- * Compiles a shader from source.
+ * Compiles a shader from source with detailed info logging.
  */
-function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
+function compileShader(
+  gl: WebGL2RenderingContext,
+  type: number,
+  source: string,
+  shaderName: string
+): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) {
-    throw new Error('Failed to create WebGL shader.');
+    const errorMsg = `[Halftone Lens] gl.createShader failed for ${shaderName}.`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
   }
 
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
 
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    const info = gl.getShaderInfoLog(shader);
+  const compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+  const infoLog = gl.getShaderInfoLog(shader);
+
+  if (!compiled) {
     gl.deleteShader(shader);
-    throw new Error(`Shader compilation error: ${info}`);
+    const errorMsg = `[Halftone Lens] ${shaderName} compilation failed:\n${infoLog || 'No info log'}`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  } else if (infoLog && infoLog.trim().length > 0) {
+    console.warn(`[Halftone Lens] ${shaderName} compilation warning:\n${infoLog}`);
   }
 
   return shader;
@@ -45,25 +58,33 @@ function createProgram(
   vertSrc: string,
   fragSrc: string
 ): WebGLProgram {
-  const vertShader = compileShader(gl, gl.VERTEX_SHADER, vertSrc);
-  const fragShader = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+  const vertShader = compileShader(gl, gl.VERTEX_SHADER, vertSrc, 'Vertex Shader');
+  const fragShader = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc, 'Fragment Shader');
 
   const program = gl.createProgram();
   if (!program) {
-    throw new Error('Failed to create WebGL program.');
+    const errorMsg = '[Halftone Lens] gl.createProgram failed.';
+    console.error(errorMsg);
+    throw new Error(errorMsg);
   }
 
   gl.attachShader(program, vertShader);
   gl.attachShader(program, fragShader);
   gl.linkProgram(program);
 
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    const info = gl.getProgramInfoLog(program);
+  const linked = gl.getProgramParameter(program, gl.LINK_STATUS);
+  const infoLog = gl.getProgramInfoLog(program);
+
+  if (!linked) {
     gl.deleteProgram(program);
-    throw new Error(`Program link error: ${info}`);
+    const errorMsg = `[Halftone Lens] Program link failed:\n${infoLog || 'No info log'}`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  } else if (infoLog && infoLog.trim().length > 0) {
+    console.warn(`[Halftone Lens] Program link warning:\n${infoLog}`);
   }
 
-  // Clean up shaders after linking
+  // Shaders can be safely detached & deleted after successful link
   gl.deleteShader(vertShader);
   gl.deleteShader(fragShader);
 
@@ -73,10 +94,12 @@ function createProgram(
 /**
  * Creates an empty 2D texture with linear filtering and clamp to edge.
  */
-function createTexture(gl: WebGL2RenderingContext): WebGLTexture {
+function createTexture(gl: WebGL2RenderingContext, textureName: string): WebGLTexture {
   const texture = gl.createTexture();
   if (!texture) {
-    throw new Error('Failed to create WebGL texture.');
+    const errorMsg = `[Halftone Lens] gl.createTexture failed for ${textureName}.`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
   }
 
   gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -89,36 +112,77 @@ function createTexture(gl: WebGL2RenderingContext): WebGLTexture {
 }
 
 /**
- * Initializes the full WebGL2 rendering pipeline.
+ * Initializes the WebGL2 rendering context and pipeline.
+ * Returns null ONLY if canvas.getContext('webgl2') returns null.
+ * Any pipeline error (shader compilation, linking, texture allocation) throws an Error.
  */
 export function initGL(
   canvas: HTMLCanvasElement,
   vertSrc: string,
   fragSrc: string
 ): GLContext | null {
+  // Capture any context creation error message
+  let contextCreationErrorMsg = '';
+  const handleCreationError = (e: Event) => {
+    const errEvent = e as WebGLContextEvent;
+    contextCreationErrorMsg = errEvent.statusMessage || 'Unknown context creation error';
+  };
+  canvas.addEventListener('webglcontextcreationerror', handleCreationError, { once: true });
+
+  // Use strictly the specified context attributes
   const gl = canvas.getContext('webgl2', {
-    alpha: false,
     antialias: false,
-    depth: false,
-    stencil: false,
-    preserveDrawingBuffer: true,
+    alpha: false,
     powerPreference: 'high-performance',
   });
 
+  canvas.removeEventListener('webglcontextcreationerror', handleCreationError);
+
   if (!gl) {
+    console.error(
+      `[Halftone Lens] getContext('webgl2') returned null. Status message: ${
+        contextCreationErrorMsg || 'none'
+      }`
+    );
     return null;
   }
 
   const glCtx: WebGL2RenderingContext = gl;
+
+  // Compile program and log errors if any
   const program = createProgram(glCtx, vertSrc, fragSrc);
   glCtx.useProgram(program);
 
-  // Fullscreen triangle VAO
+  // Setup Fullscreen triangle VAO & VBO for maximum driver compatibility
   const vao = glCtx.createVertexArray();
   if (!vao) {
-    return null;
+    const errorMsg = '[Halftone Lens] gl.createVertexArray failed.';
+    console.error(errorMsg);
+    throw new Error(errorMsg);
   }
   glCtx.bindVertexArray(vao);
+
+  const vbo = glCtx.createBuffer();
+  if (!vbo) {
+    const errorMsg = '[Halftone Lens] gl.createBuffer failed.';
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+  glCtx.bindBuffer(glCtx.ARRAY_BUFFER, vbo);
+
+  // Fullscreen triangle covering clipspace [-1, 1]
+  const vertices = new Float32Array([
+    -1.0, -1.0,
+     3.0, -1.0,
+    -1.0,  3.0,
+  ]);
+  glCtx.bufferData(glCtx.ARRAY_BUFFER, vertices, glCtx.STATIC_DRAW);
+
+  const posLoc = glCtx.getAttribLocation(program, 'aPosition');
+  if (posLoc !== -1) {
+    glCtx.enableVertexAttribArray(posLoc);
+    glCtx.vertexAttribPointer(posLoc, 2, glCtx.FLOAT, false, 0, 0);
+  }
 
   // Discover and cache all active uniform locations
   const uniforms: Record<string, WebGLUniformLocation> = {};
@@ -152,14 +216,14 @@ export function initGL(
   }
 
   // Create textures for text masks and glyph atlas
-  const maskPrev = createTexture(glCtx);
-  const maskNext = createTexture(glCtx);
-  const atlas = createTexture(glCtx);
+  const maskPrev = createTexture(glCtx, 'uMaskPrev');
+  const maskNext = createTexture(glCtx, 'uMaskNext');
+  const atlas = createTexture(glCtx, 'uAtlas');
 
   // Bind texture units: 0 = maskPrev, 1 = maskNext, 2 = atlas
-  glCtx.uniform1i(uniforms['uMaskPrev'], 0);
-  glCtx.uniform1i(uniforms['uMaskNext'], 1);
-  glCtx.uniform1i(uniforms['uAtlas'], 2);
+  if (uniforms['uMaskPrev']) glCtx.uniform1i(uniforms['uMaskPrev'], 0);
+  if (uniforms['uMaskNext']) glCtx.uniform1i(uniforms['uMaskNext'], 1);
+  if (uniforms['uAtlas']) glCtx.uniform1i(uniforms['uAtlas'], 2);
 
   function updateTextureFromCanvas(texture: WebGLTexture, sourceCanvas: HTMLCanvasElement) {
     glCtx.bindTexture(glCtx.TEXTURE_2D, texture);

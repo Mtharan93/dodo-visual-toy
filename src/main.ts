@@ -3,12 +3,7 @@
  * Main entry point: bootstrap, render loop, event coordination, and texture lifecycle.
  */
 
-import '@fontsource/space-grotesk/400.css';
-import '@fontsource/space-grotesk/500.css';
-import '@fontsource/space-grotesk/700.css';
-import '@fontsource/jetbrains-mono/400.css';
 import './style.css';
-
 import vertSrc from './shader.vert.glsl?raw';
 import fragSrc from './shader.frag.glsl?raw';
 import { initGL, type GLContext } from './gl';
@@ -53,46 +48,76 @@ class HalftoneLensApp {
 
   public async start() {
     // 1. Initialize WebGL2
-    this.glCtx = initGL(this.canvas, vertSrc, fragSrc);
+    try {
+      this.glCtx = initGL(this.canvas, vertSrc, fragSrc);
+    } catch (err) {
+      console.error('[Halftone Lens] Pipeline initialization error:', err);
+      return;
+    }
+
+    // Show unsupported fallback ONLY when getContext('webgl2') returned null
     if (!this.glCtx) {
       this.showFallback();
       return;
     }
 
-    // 2. Initialize UI controller
-    this.ui = new UIController({
-      onTextChange: (newWord) => this.handleTextChange(newWord),
-      onCellSizeChange: (cellSize) => this.handleCellSizeChange(cellSize),
-      onLensRadiusChange: (radius) => this.physics.setBaseRadius(radius),
-      onSavePNG: () => this.savePNG(),
-    });
-    this.ui.init();
+    try {
+      // 2. Initialize UI controller
+      this.ui = new UIController({
+        onTextChange: (newWord) => this.handleTextChange(newWord),
+        onCellSizeChange: (cellSize) => this.handleCellSizeChange(cellSize),
+        onLensRadiusChange: (radius) => this.physics.setBaseRadius(radius),
+        onSavePNG: () => this.savePNG(),
+      });
+      this.ui.init();
 
-    // 3. Upload Atlas Texture
-    const { textures, updateTextureFromCanvas } = this.glCtx;
-    updateTextureFromCanvas(textures.atlas, this.atlasCanvas);
+      // 3. Upload Atlas Texture
+      const { textures, updateTextureFromCanvas } = this.glCtx;
+      updateTextureFromCanvas(textures.atlas, this.atlasCanvas);
 
-    // 4. Wait for web fonts to load
-    await document.fonts.ready;
+      // 4. Wait for web fonts to load
+      try {
+        await document.fonts.ready;
+      } catch (fontErr) {
+        console.warn('[Halftone Lens] Font loading error (proceeding with fallback font):', fontErr);
+      }
 
-    // 5. Initial setup & resize
-    this.updateDimensions();
-    this.setupEventListeners();
+      // 5. Initial setup & resize
+      this.updateDimensions();
+      this.setupEventListeners();
 
-    // 6. Initial text render to both mask textures
-    this.renderTextMask(this.ui.state.currentWord, false);
+      // 6. Initial text render to both mask textures
+      this.renderTextMask(this.ui.state.currentWord, false);
 
-    // 7. Start render loop
-    this.lastTime = performance.now();
-    this.isRunning = true;
-    this.rafId = requestAnimationFrame((t) => this.frame(t));
+      // 7. Initial draw call
+      this.drawFrame();
+
+      // 8. Reveal UI and Canvas when fully rendered (after double rAF to guarantee buffer presentation)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          document.documentElement.classList.add('ready');
+          document.body.classList.add('ready');
+        });
+      });
+
+      // 9. Start continuous render loop
+      this.lastTime = performance.now();
+      this.isRunning = true;
+      this.rafId = requestAnimationFrame((t) => this.frame(t));
+    } catch (startupErr) {
+      console.error('[Halftone Lens] Error during application startup:', startupErr);
+    }
   }
 
   private showFallback() {
     const fallbackEl = document.getElementById('no-webgl');
     if (fallbackEl) {
-      fallbackEl.hidden = false;
+      fallbackEl.removeAttribute('hidden');
+      fallbackEl.classList.add('active');
     }
+    // Also reveal document so fallback content is visible
+    document.documentElement.classList.add('ready');
+    document.body.classList.add('ready');
   }
 
   private updateDimensions() {
@@ -267,13 +292,12 @@ class HalftoneLensApp {
     // Render frame
     this.drawFrame();
 
-    // Dev frame performance logging
+    // Dev frame performance logging (stripped in production)
     if (import.meta.env.DEV) {
       this.frameCount++;
       this.frameTimeSum += dtSeconds;
       if (this.frameCount >= 180) {
         const avgMs = (this.frameTimeSum / this.frameCount) * 1000;
-        // Average frame time logged in dev only
         console.debug(`[Halftone Lens] Avg Frame Time: ${avgMs.toFixed(2)}ms (${(1000 / avgMs).toFixed(0)} FPS)`);
         this.frameCount = 0;
         this.frameTimeSum = 0;
@@ -349,10 +373,16 @@ class HalftoneLensApp {
     gl.uniform1f(uniforms['uTime'], this.totalTime);
     gl.uniform1f(uniforms['uReducedMotion'], this.physics.checkReducedMotion() ? 1.0 : 0.0);
 
-    // Draw single fullscreen triangle (3 vertices via gl_VertexID)
+    // Draw single fullscreen triangle (3 vertices via VBO aPosition)
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 }
+
+// Failsafe: reveal page if ready class was not added within 2500ms
+setTimeout(() => {
+  document.documentElement.classList.add('ready');
+  document.body.classList.add('ready');
+}, 2500);
 
 // Bootstrap application on DOM ready
 window.addEventListener('DOMContentLoaded', () => {

@@ -3,6 +3,11 @@
    Vanilla CSS with CSS custom properties, glassmorphism, responsive dock
    ========================================================================== */
 
+/* Font imports */
+@import '@fontsource/space-grotesk/500.css';
+@import '@fontsource/space-grotesk/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+
 :root {
   /* Theme 1: Paper (Default) */
   --bg-paper: #EFEBE3;
@@ -24,6 +29,7 @@
 }
 
 /* Theme 2: Night */
+html[data-theme="1"],
 body[data-theme="1"] {
   --bg-paper: #0E0E0D;
   --color-ink: #EDEAE2;
@@ -38,6 +44,7 @@ body[data-theme="1"] {
 }
 
 /* Theme 3: Lime */
+html[data-theme="2"],
 body[data-theme="2"] {
   --bg-paper: #C8F135;
   --color-ink: #0E0E0D;
@@ -122,11 +129,11 @@ html, body {
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 6px 10px;
   border-radius: 6px;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0.85;
   transition: opacity 300ms ease, transform 150ms ease, background-color 200ms ease;
 }
 
@@ -140,10 +147,48 @@ html, body {
   outline-offset: 2px;
 }
 
-.hint.faded {
+.hint-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 1;
+  transition: opacity 300ms ease;
+}
+
+.hint-prompt.faded {
   opacity: 0;
-  pointer-events: none;
-  transition: opacity 600ms ease;
+  display: none;
+}
+
+.char-counter {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--color-ink);
+  opacity: 0.8;
+  display: inline-block;
+  transition: color 200ms ease, opacity 200ms ease;
+}
+
+.char-counter.counter-warn {
+  color: var(--color-accent);
+  opacity: 1;
+  font-weight: 700;
+}
+
+/* 200ms Shake animation when limit is reached */
+@keyframes counter-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  50% { transform: translateX(3px); }
+  75% { transform: translateX(-2px); }
+}
+
+.hint.shake,
+.char-counter.shake {
+  animation: counter-shake 200ms ease-in-out;
 }
 
 .blinking-caret {
@@ -161,7 +206,7 @@ html, body {
 
 /* Visually Hidden Mobile Input */
 .visually-hidden {
-  position: absolute;
+  position: fixed;
   width: 1px;
   height: 1px;
   padding: 0;
@@ -170,16 +215,19 @@ html, body {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+  left: -9999px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .mobile-input {
   position: fixed;
-  top: -100px;
-  left: -100px;
+  left: -9999px;
   opacity: 0;
   pointer-events: none;
   width: 1px;
   height: 1px;
+  font-size: 16px; /* Prevents iOS auto-zoom */
   z-index: -1;
 }
 
@@ -434,13 +482,23 @@ html, body {
 .fallback-screen {
   position: fixed;
   inset: 0;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   background-color: var(--bg-paper);
   color: var(--color-ink);
   z-index: 50;
   padding: 24px;
+}
+
+.fallback-screen:not([hidden]),
+.fallback-screen.active {
+  display: flex;
+}
+
+[hidden],
+.fallback-screen[hidden] {
+  display: none !important;
 }
 
 .fallback-content {

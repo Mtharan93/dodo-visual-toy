@@ -12,6 +12,76 @@
     
     <!-- Favicon: Single elegant halftone dot SVG -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23141311'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23EFEBE3'/%3E%3C/svg%3E" />
+
+    <!-- 1. Instant Theme Resolution before First Paint -->
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('theme');
+          var themeIdx = saved !== null ? parseInt(saved, 10) : 0;
+          if (themeIdx >= 0 && themeIdx <= 2) {
+            document.documentElement.dataset.theme = themeIdx;
+            var bgColors = ['#EFEBE3', '#0E0E0D', '#C8F135'];
+            var bg = bgColors[themeIdx];
+            document.documentElement.style.backgroundColor = bg;
+            document.documentElement.style.background = bg;
+            var metaTheme = document.querySelector('meta[name="theme-color"]');
+            if (metaTheme) metaTheme.setAttribute('content', bg);
+          }
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- 2. Critical Inline CSS: Prevents FOUC and sets zero-flash baseline -->
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background-color: #EFEBE3;
+        overflow: hidden;
+      }
+      html[data-theme="1"], body[data-theme="1"] {
+        background-color: #0E0E0D;
+      }
+      html[data-theme="2"], body[data-theme="2"] {
+        background-color: #C8F135;
+      }
+      .mobile-input,
+      .visually-hidden {
+        position: fixed;
+        opacity: 0;
+        pointer-events: none;
+        width: 1px;
+        height: 1px;
+        left: -9999px;
+        font-size: 16px;
+      }
+      html:not(.ready) .dock-container,
+      html:not(.ready) .dock-pill,
+      html:not(.ready) .hint,
+      html:not(.ready) .brand,
+      html:not(.ready) canvas,
+      html:not(.ready) #gl-canvas {
+        opacity: 0 !important;
+        visibility: hidden !important;
+      }
+      .dock-container, .dock-pill, .hint, .brand, canvas, #gl-canvas {
+        transition: opacity 300ms ease;
+      }
+    </style>
+
+    <!-- 3. NoScript Failsafe -->
+    <noscript>
+      <style>
+        .dock-container, .dock-pill, .hint, .brand, canvas, #gl-canvas {
+          opacity: 1 !important;
+          visibility: visible !important;
+        }
+      </style>
+    </noscript>
+
+    <!-- 4. Render-blocking External Stylesheet Link -->
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <!-- Fullscreen WebGL2 Rendering Canvas -->
@@ -29,8 +99,11 @@
     <header class="ui-header" aria-label="Header controls">
       <div class="brand" id="brand-wordmark">Halftone Lens</div>
       <button type="button" class="hint" id="type-hint" aria-label="Type to change text (tap to open keyboard)">
-        <span class="hint-text">Type anything</span>
-        <span class="blinking-caret" aria-hidden="true"></span>
+        <span class="hint-prompt" id="hint-prompt">
+          <span class="hint-text">Type anything</span>
+          <span class="blinking-caret" aria-hidden="true"></span>
+        </span>
+        <span class="char-counter" id="char-counter" aria-live="polite">4/40</span>
       </button>
     </header>
 
@@ -46,7 +119,7 @@
       autocorrect="off"
       autocapitalize="off"
       spellcheck="false"
-      maxlength="14"
+      maxlength="40"
       value="DODO"
     />
 
@@ -98,7 +171,7 @@
             role="radio"
             aria-checked="true"
             aria-label="Theme 1: Paper"
-            title="Theme 1: Paper (Key 1)"
+            title="Theme 1: Paper (Alt+1)"
           >
             <span class="dot-swatch paper-swatch"></span>
           </button>
@@ -110,7 +183,7 @@
             role="radio"
             aria-checked="false"
             aria-label="Theme 2: Night"
-            title="Theme 2: Night (Key 2)"
+            title="Theme 2: Night (Alt+2)"
           >
             <span class="dot-swatch night-swatch"></span>
           </button>
@@ -122,7 +195,7 @@
             role="radio"
             aria-checked="false"
             aria-label="Theme 3: Lime"
-            title="Theme 3: Lime (Key 3)"
+            title="Theme 3: Lime (Alt+3)"
           >
             <span class="dot-swatch lime-swatch"></span>
           </button>
@@ -135,8 +208,8 @@
           type="button"
           class="action-btn"
           id="export-btn"
-          aria-label="Save image as PNG (Key S)"
-          title="Save PNG (Key S)"
+          aria-label="Save image as PNG (Alt+S)"
+          title="Save PNG (Alt+S)"
         >
           <svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -149,6 +222,7 @@
       </div>
     </nav>
 
+    <!-- Application Main Script -->
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

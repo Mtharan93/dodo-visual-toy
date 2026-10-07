@@ -1,5 +1,6 @@
 #version 300 es
 precision highp float;
+precision highp sampler2D;
 
 in vec2 vUV;
 out vec4 fragColor;
@@ -42,7 +43,7 @@ void main() {
     // Pixel coordinate with (0,0) at top-left matching canvas 2D
     vec2 p = vec2(gl_FragCoord.x, uResolution.y - gl_FragCoord.y);
 
-    // 15 degree grid rotation (0.261799388 rad)
+    // 15 degree grid rotation (0.261799388 rad) applied strictly to dot lattice
     const float cosA = 0.965925826;
     const float sinA = 0.258819045;
     vec2 pRot = vec2(p.x * cosA - p.y * sinA, p.x * sinA + p.y * cosA);
@@ -50,8 +51,12 @@ void main() {
     float cellSize = uCellSize * uDPR;
     vec2 cellIdx = floor(pRot / cellSize);
     vec2 cellCenterRot = (cellIdx + 0.5) * cellSize;
+    
+    // Cell center converted back to unrotated horizontal screen space
     vec2 cellCenter = vec2(cellCenterRot.x * cosA + cellCenterRot.y * sinA, -cellCenterRot.x * sinA + cellCenterRot.y * cosA);
-    vec2 uCell = (pRot - cellCenterRot) / cellSize + 0.5;
+
+    // Upright local cell coordinates for glyph sampling (unrotated)
+    vec2 uCell = (p - cellCenter) / cellSize + 0.5;
 
     // Lens ellipse coordinate transform
     vec2 lensRad = max(uLensRadius * uDPR, vec2(1.0));
@@ -86,19 +91,20 @@ void main() {
         float dShock = length(cellCenter - uShockOrigin);
         float ringWidth = (80.0 + uShockTime * 40.0) * uDPR;
         float distToWave = abs(dShock - waveRadius);
-        float pulse = exp(-pow(distToWave / (ringWidth * 0.5), 2.0));
+        float pulseFactor = distToWave / max(ringWidth * 0.5, 1.0);
+        float pulse = exp(-(pulseFactor * pulseFactor));
         float decay = exp(-uShockTime * 2.8) * (1.0 - 0.7 * uReducedMotion);
         vec2 shockDir = normalize(cellCenter - uShockOrigin + vec2(0.001, 0.0));
         displacedCenter += shockDir * (0.6 * cellSize * pulse * decay);
         shockScale += 0.4 * pulse * decay;
     }
 
-    // Staggered text morph using cell ID hash
+    // Staggered text morph using cell ID hash (per-cell transition)
     float cellH = hash21(cellIdx);
     float localMix = clamp((uMix - cellH * 0.35) / 0.65, 0.0, 1.0);
     localMix = smoothstep(0.0, 1.0, localMix);
 
-    // 1. Density for outside halftone dots
+    // 1. Density for outside halftone dots (sampled at unrotated cellCenter for horizontal text)
     vec2 uvOutside = clamp(cellCenter / uResolution, 0.0, 1.0);
     float dPrev = texture(uMaskPrev, uvOutside).r;
     float dNext = texture(uMaskNext, uvOutside).r;
@@ -111,7 +117,7 @@ void main() {
     float dotAlpha = 1.0 - smoothstep(dotRadius - fw * 0.75, dotRadius + fw * 0.75, distFromCenter);
     vec3 outsideColor = mix(uColorPaper, uColorInk, dotAlpha);
 
-    // 2. Inside lens: ASCII glyph sampling with magnification distortion
+    // 2. Inside lens: Upright ASCII glyph sampling with magnification distortion
     vec2 cellToLens = cellCenter - uLensPos;
     float lensWeight = 1.0 - smoothstep(0.0, 1.0, eDistCell);
     vec2 samplePosLens = cellCenter - cellToLens * (0.12 * lensWeight);
